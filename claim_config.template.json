@@ -1,0 +1,15 @@
+{
+  "framework_version": "1.0.0",
+  "framework_commit_sha": "REPLACE_WITH_LOCKED_FRAMEWORK_COMMIT",
+  "claim_number": "003",
+  "claim_title": "REPLACE WITH CLAIM TITLE",
+  "axiom_name": "REPLACE WITH AXIOM NAME",
+  "axiom_text": "REPLACE WITH THE AXIOM ITSELF",
+  "assay_id": "REPLACE_WITH_LOCKED_ASSAY_ID",
+  "assay_version": "v1.0.0",
+  "assay_spec_commit_sha": "REPLACE_WITH_LOCKED_ASSAY_SPEC_COMMIT",
+  "runner_or_code_sha": "REPLACE_WITH_LOCKED_RUNNER_OR_CODE_SHA",
+  "condition_0_text": "REPLACE WITH THE LOCKED BASELINE CONDITION TEXT",
+  "condition_1_text": "REPLACE WITH THE LOCKED AXIOM INTERVENTION TEXT",
+  "notes": "The claim is bound to a predeclared assay. Do not modify locked assay mechanics after official runs begin; substantive changes require a new assay version."
+}
