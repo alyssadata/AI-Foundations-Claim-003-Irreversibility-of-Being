@@ -9,11 +9,11 @@ This file records execution settings explicitly settled before official testing.
 ## Model and serving environment — LOCKED
 
 ```text
-Model: Qwen2.5-32B-Instruct
+Model: qwen2.5-32b-instruct
 Serving environment: LM Studio local OpenAI-compatible API
 ```
 
-Claim 003 uses the same model and serving environment as the verified Claim 002 V3 runs.
+Claim 003 uses the same model and serving environment as the verified Claim 002 V3 runs. The model identifier is recorded exactly as `qwen2.5-32b-instruct`.
 
 ## Generation settings — LOCKED
 
