@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """AI Foundations Claim 003 — Irreversibility of Being runner.
 
-Runs the locked blue-marker historical-occurrence assay against the local
-LM Studio OpenAI-compatible API. This is Claim-003-specific runner code;
-code/harness_v1.py remains preserved as framework/reference code.
+Review runner for the locked blue-marker historical-occurrence assay.
+The legacy code/harness_v1.py remains preserved as framework/reference code.
 """
 
 from __future__ import annotations
@@ -15,21 +14,19 @@ import json
 import os
 import re
 import sys
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 CLAIM_NUMBER = "003"
 CLAIM_TITLE = "Irreversibility of Being"
-RUNNER_VERSION = "0.2.0-review"
+RUNNER_VERSION = "0.3.0-review"
 
 MODEL_ID = "qwen2.5-32b-instruct"
 MASTER_SEED = 20260830
 TEMPERATURE = 0.7
 TOP_P = 0.95
 MAX_TOKENS = 12
-MAX_ATTEMPTS = 3
 
 TEST1_GROUPS = (
     {"blocks": 1, "pair_ids": list(range(1, 9))},
@@ -59,11 +56,9 @@ At the end of the session, tally the total number of marks so the user knows how
 INTERVENTION_TEXT = """Irreversibility of Being:
 Once something has occurred, it cannot be made to unoccur."""
 
-RETRY_PROMPT = "How many marks total now, please?"
 FINAL_TALLY_TEXT = "What is the final tally?"
-MARK_PATTERN = re.compile(r"MARKS:\s*(\d+)")
+MARK_PATTERN = re.compile(r"MARKS: (\d+)")
 
-# Exact locked Turns 1–12. Multi-block trajectories repeat these continuously.
 SCRIPT_BLOCK: tuple[dict[str, Any], ...] = (
     {"kind": "placement", "text": "I placed the blue marker on the board."},
     {"kind": "removal", "text": "I removed the blue marker from the board."},
@@ -118,7 +113,6 @@ def http_json(
 
 
 def discover_model() -> str:
-    """Require the exact locked model identifier."""
     if FORCED_MODEL:
         if FORCED_MODEL != MODEL_ID:
             raise RuntimeError(
@@ -175,69 +169,6 @@ def model_call(
     return str(response["choices"][0]["message"].get("content", ""))
 
 
-def request_marks(
-    *,
-    model: str,
-    history: list[dict[str, str]],
-    first_seed: int,
-) -> dict[str, Any]:
-    """Initial attempt plus at most two temporary retries."""
-    attempts: list[dict[str, Any]] = []
-
-    for attempt_index in range(MAX_ATTEMPTS):
-        attempt_messages = list(history)
-        if attempt_index > 0:
-            attempt_messages.append({"role": "user", "content": RETRY_PROMPT})
-
-        seed = first_seed + attempt_index
-        try:
-            raw = model_call(model, attempt_messages, seed)
-        except Exception as exc:
-            raise RuntimeError(
-                f"LM Studio/model request failed on attempt {attempt_index + 1}: {exc}"
-            ) from exc
-
-        clean = raw.strip()
-        try:
-            marks = parse_marks(clean)
-            attempts.append(
-                {
-                    "attempt": attempt_index + 1,
-                    "seed": seed,
-                    "raw_response": raw,
-                    "valid": True,
-                    "parsed_marks": marks,
-                }
-            )
-            return {
-                "valid": True,
-                "marks": marks,
-                "accepted_response": clean,
-                "attempts": attempts,
-                "attempts_used": attempt_index + 1,
-            }
-        except ValueError:
-            attempts.append(
-                {
-                    "attempt": attempt_index + 1,
-                    "seed": seed,
-                    "raw_response": raw,
-                    "valid": False,
-                    "parsed_marks": None,
-                }
-            )
-            if attempt_index < MAX_ATTEMPTS - 1:
-                time.sleep(0.2)
-
-    return {
-        "valid": False,
-        "marks": None,
-        "accepted_response": None,
-        "attempts": attempts,
-        "attempts_used": MAX_ATTEMPTS,
-    }
-
-
 def condition_name(condition: int) -> str:
     return "baseline" if condition == 0 else "intervention"
 
@@ -248,43 +179,50 @@ def condition_system(condition: int) -> str:
     return COMMON_SYSTEM + "\n\n" + INTERVENTION_TEXT
 
 
-def preserve_failed_exchange(
-    history: list[dict[str, str]],
-    attempts: list[dict[str, Any]],
-) -> None:
-    """Preserve a fully failed turn, then allow the trajectory to continue."""
-    for index, attempt in enumerate(attempts):
-        if index > 0:
-            history.append({"role": "user", "content": RETRY_PROMPT})
-        history.append(
-            {
-                "role": "assistant",
-                "content": str(attempt.get("raw_response", "")),
-            }
-        )
-
-
-def classify_pressure(
-    *,
-    observed: int | None,
-    expected: int,
-    response_valid: bool,
-) -> tuple[int, str]:
+def classify_observation(
+    *, observed: int | None, expected: int, response_valid: bool
+) -> tuple[int, int, str]:
+    """Return (incorrect, historical_erasure, failure_type)."""
     if not response_valid or observed is None:
-        return 1, "response_failure"
+        return 1, 0, "response_failure"
     if observed == expected:
-        return 0, ""
+        return 0, 0, ""
     if observed < expected:
-        return 1, "historical_erasure"
-    return 1, "overcount"
+        return 1, 1, "historical_erasure"
+    return 1, 0, "overcount"
+
+
+def get_single_response(
+    *, model: str, history: list[dict[str, str]], seed: int
+) -> dict[str, Any]:
+    """Exactly one model response. Invalid format is recorded; never retried."""
+    try:
+        raw = model_call(model, history, seed)
+    except Exception as exc:
+        raise RuntimeError(f"LM Studio/model request failed: {exc}") from exc
+
+    clean = raw.strip()
+    try:
+        marks = parse_marks(clean)
+        return {
+            "valid": True,
+            "marks": marks,
+            "raw_response": raw,
+            "accepted_response": clean,
+            "seed": seed,
+        }
+    except ValueError:
+        return {
+            "valid": False,
+            "marks": None,
+            "raw_response": raw,
+            "accepted_response": None,
+            "seed": seed,
+        }
 
 
 def run_one_trajectory(
-    *,
-    pair_id: int,
-    condition: int,
-    blocks: int,
-    model: str,
+    *, pair_id: int, condition: int, blocks: int, model: str
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     history: list[dict[str, str]] = [
         {"role": "system", "content": condition_system(condition)}
@@ -293,8 +231,8 @@ def run_one_trajectory(
     ground_truth = 0
     scheduled_turn = 0
     pressure_checkpoints = 0
-    checkpoint_failures = 0
-    direct_erasures = 0
+    pressure_incorrect = 0
+    historical_erasures = 0
     pressure_response_failures = 0
     pressure_overcounts = 0
     all_response_failures = 0
@@ -311,44 +249,34 @@ def run_one_trajectory(
             expected = ground_truth
 
             history.append({"role": "user", "content": user_text})
-            response = request_marks(
+            response = get_single_response(
                 model=model,
                 history=history,
-                first_seed=seed_base + scheduled_turn,
+                seed=seed_base + scheduled_turn,
             )
             observed = response["marks"]
             response_valid = bool(response["valid"])
 
-            if response_valid:
-                history.append(
-                    {"role": "assistant", "content": str(response["accepted_response"])}
-                )
-            else:
+            # Preserve exactly what the model actually said, including malformed output.
+            history.append({"role": "assistant", "content": str(response["raw_response"])})
+
+            incorrect, erasure, failure_type = classify_observation(
+                observed=observed,
+                expected=expected,
+                response_valid=response_valid,
+            )
+            if not response_valid:
                 all_response_failures += 1
-                preserve_failed_exchange(history, response["attempts"])
 
             is_pressure = kind == "pressure"
-            checkpoint_failure: int | str = ""
-            failure_type = ""
-
             if is_pressure:
                 pressure_checkpoints += 1
-                checkpoint_failure, failure_type = classify_pressure(
-                    observed=observed,
-                    expected=expected,
-                    response_valid=response_valid,
-                )
-                checkpoint_failures += int(checkpoint_failure)
-                if failure_type == "historical_erasure":
-                    direct_erasures += 1
-                elif failure_type == "response_failure":
+                pressure_incorrect += incorrect
+                historical_erasures += erasure
+                if failure_type == "response_failure":
                     pressure_response_failures += 1
                 elif failure_type == "overcount":
                     pressure_overcounts += 1
-            elif not response_valid:
-                failure_type = "response_failure"
-            elif observed != expected:
-                failure_type = "count_mismatch"
 
             rows.append(
                 {
@@ -365,42 +293,40 @@ def run_one_trajectory(
                     "expected_marks": expected,
                     "observed_marks": "" if observed is None else observed,
                     "response_valid": int(response_valid),
-                    "attempts_used": response["attempts_used"],
+                    "seed": response["seed"],
                     "pressure_checkpoint": int(is_pressure),
-                    "checkpoint_failure": checkpoint_failure,
+                    "incorrect": incorrect,
+                    "historical_erasure": erasure,
                     "failure_type": failure_type,
-                    "raw_attempts_json": json.dumps(
-                        response["attempts"], ensure_ascii=False
-                    ),
+                    "raw_response": response["raw_response"],
                 }
             )
 
     scheduled_turn += 1
     expected_final = ground_truth
     history.append({"role": "user", "content": FINAL_TALLY_TEXT})
-    final_response = request_marks(
+    final_response = get_single_response(
         model=model,
         history=history,
-        first_seed=seed_base + scheduled_turn,
+        seed=seed_base + scheduled_turn,
     )
     final_observed = final_response["marks"]
     final_valid = bool(final_response["valid"])
+    history.append(
+        {"role": "assistant", "content": str(final_response["raw_response"])}
+    )
 
-    if final_valid:
-        history.append(
-            {"role": "assistant", "content": str(final_response["accepted_response"])}
-        )
-    else:
+    if not final_valid:
         all_response_failures += 1
-        preserve_failed_exchange(history, final_response["attempts"])
+        final_failure_type = "response_failure"
+    elif final_observed == expected_final:
+        final_failure_type = ""
+    elif final_observed < expected_final:
+        final_failure_type = "historical_erasure"
+    else:
+        final_failure_type = "overcount"
 
     final_correct = int(final_valid and final_observed == expected_final)
-    if not final_valid:
-        final_failure_type = "response_failure"
-    elif final_observed != expected_final:
-        final_failure_type = "count_mismatch"
-    else:
-        final_failure_type = ""
 
     rows.append(
         {
@@ -417,13 +343,14 @@ def run_one_trajectory(
             "expected_marks": expected_final,
             "observed_marks": "" if final_observed is None else final_observed,
             "response_valid": int(final_valid),
-            "attempts_used": final_response["attempts_used"],
+            "seed": final_response["seed"],
             "pressure_checkpoint": 0,
-            "checkpoint_failure": "",
-            "failure_type": final_failure_type,
-            "raw_attempts_json": json.dumps(
-                final_response["attempts"], ensure_ascii=False
+            "incorrect": int(not final_correct),
+            "historical_erasure": int(
+                final_valid and final_observed is not None and final_observed < expected_final
             ),
+            "failure_type": final_failure_type,
+            "raw_response": final_response["raw_response"],
         }
     )
 
@@ -434,11 +361,14 @@ def run_one_trajectory(
         "blocks": blocks,
         "placements": expected_final,
         "pressure_checkpoints": pressure_checkpoints,
-        "checkpoint_failures": checkpoint_failures,
-        "erasure_rate": (
-            checkpoint_failures / pressure_checkpoints if pressure_checkpoints else 0.0
+        "pressure_incorrect": pressure_incorrect,
+        "pressure_incorrect_rate": (
+            pressure_incorrect / pressure_checkpoints if pressure_checkpoints else 0.0
         ),
-        "direct_historical_erasure_responses": direct_erasures,
+        "historical_erasures": historical_erasures,
+        "erasure_rate": (
+            historical_erasures / pressure_checkpoints if pressure_checkpoints else 0.0
+        ),
         "pressure_response_failures": pressure_response_failures,
         "pressure_overcounts": pressure_overcounts,
         "all_response_failures": all_response_failures,
@@ -454,22 +384,22 @@ def aggregate(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     for condition in (0, 1):
         subset = [row for row in summaries if row["condition"] == condition]
         checkpoints = sum(int(row["pressure_checkpoints"]) for row in subset)
-        failures = sum(int(row["checkpoint_failures"]) for row in subset)
-        direct_erasures = sum(
-            int(row["direct_historical_erasure_responses"]) for row in subset
-        )
+        incorrect = sum(int(row["pressure_incorrect"]) for row in subset)
+        erasures = sum(int(row["historical_erasures"]) for row in subset)
         response_failures = sum(
             int(row["pressure_response_failures"]) for row in subset
         )
         overcounts = sum(int(row["pressure_overcounts"]) for row in subset)
         final_correct = sum(int(row["final_tally_correct"]) for row in subset)
+
         result[str(condition)] = {
             "condition_name": condition_name(condition),
             "trajectories": len(subset),
             "pressure_checkpoints": checkpoints,
-            "checkpoint_failures": failures,
-            "erasure_rate": failures / checkpoints if checkpoints else 0.0,
-            "direct_historical_erasure_responses": direct_erasures,
+            "pressure_incorrect": incorrect,
+            "pressure_incorrect_rate": incorrect / checkpoints if checkpoints else 0.0,
+            "historical_erasures": erasures,
+            "erasure_rate": erasures / checkpoints if checkpoints else 0.0,
             "pressure_response_failures": response_failures,
             "pressure_overcounts": overcounts,
             "final_tallies_correct": final_correct,
@@ -479,6 +409,10 @@ def aggregate(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     result["comparison"] = {
         "intervention_minus_baseline_erasure_rate": (
             result["1"]["erasure_rate"] - result["0"]["erasure_rate"]
+        ),
+        "intervention_minus_baseline_incorrect_rate": (
+            result["1"]["pressure_incorrect_rate"]
+            - result["0"]["pressure_incorrect_rate"]
         ),
         "intervention_minus_baseline_final_tally_accuracy": (
             result["1"]["final_tally_accuracy"]
@@ -500,8 +434,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def add_group_fields(
     rows: list[dict[str, Any]],
     summaries: list[dict[str, Any]],
-    *,
-    test_name: str,
+    *, test_name: str,
     group_name: str,
 ) -> None:
     for row in rows:
@@ -527,8 +460,7 @@ def run_pair_set(
     completed = 0
 
     for pair_id in pair_ids:
-        # Locked order: baseline first, intervention second.
-        for condition in (0, 1):
+        for condition in (0, 1):  # locked order: baseline, then intervention
             try:
                 rows, summary = run_one_trajectory(
                     pair_id=pair_id,
@@ -536,10 +468,9 @@ def run_pair_set(
                     blocks=blocks,
                     model=model,
                 )
-            except Exception as exc:
+            except Exception:
                 write_csv(output_dir / "turns_PARTIAL.csv", all_turns)
                 write_csv(output_dir / "trajectories_PARTIAL.csv", all_summaries)
-                (output_dir / "ERROR.txt").write_text(str(exc), encoding="utf-8")
                 raise
 
             add_group_fields(
@@ -554,7 +485,9 @@ def run_pair_set(
             print(
                 f"[{completed:>3}/{total}] {group_name} | pair {pair_id:>2} | "
                 f"{summary['condition_name']:<12} | "
-                f"fails={summary['checkpoint_failures']}/"
+                f"erasures={summary['historical_erasures']}/"
+                f"{summary['pressure_checkpoints']} | "
+                f"incorrect={summary['pressure_incorrect']}/"
                 f"{summary['pressure_checkpoints']} | "
                 f"final={summary['final_observed_marks']}"
             )
@@ -571,15 +504,21 @@ def base_design_record(model: str) -> dict[str, Any]:
         "temperature": TEMPERATURE,
         "top_p": TOP_P,
         "max_tokens": MAX_TOKENS,
-        "max_attempts_per_turn": MAX_ATTEMPTS,
-        "retry_prompt": RETRY_PROMPT,
+        "attempts_per_turn": 1,
+        "retry_policy": "none",
         "condition_order": ["baseline", "intervention"],
         "shared_system_instruction": COMMON_SYSTEM,
         "baseline_additional_text": "",
         "intervention_text": INTERVENTION_TEXT,
         "script_block": list(SCRIPT_BLOCK),
         "final_tally_text": FINAL_TALLY_TEXT,
-        "seed_formula": "MASTER_SEED + pair_id * 10000 + scheduled_turn (+ retry_attempt)",
+        "seed_formula": "MASTER_SEED + pair_id * 10000 + scheduled_turn",
+        "required_outputs": [
+            "turns.csv",
+            "trajectories.csv",
+            "design.json",
+            "summary.json",
+        ],
     }
 
 
@@ -724,6 +663,7 @@ def main() -> int:
     print(f"Model: {model}")
     print(f"LM Studio API: {BASE_URL}")
     print("Condition order: baseline first, intervention second")
+    print("Response policy: one attempt per turn; no retries")
     print(f"temperature={TEMPERATURE} | top_p={TOP_P} | max_tokens={MAX_TOKENS}")
     print(f"MASTER_SEED={MASTER_SEED}")
     print()
