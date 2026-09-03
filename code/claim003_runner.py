@@ -22,7 +22,7 @@ from typing import Any
 
 CLAIM_NUMBER = "003"
 CLAIM_TITLE = "Irreversibility of Being"
-RUNNER_VERSION = "0.1.0-review"
+RUNNER_VERSION = "0.2.0-review"
 
 MODEL_ID = "qwen2.5-32b-instruct"
 MASTER_SEED = 20260830
@@ -31,9 +31,15 @@ TOP_P = 0.95
 MAX_TOKENS = 12
 MAX_ATTEMPTS = 3
 
-DEFAULT_PAIRS = 8
-DEFAULT_BLOCKS = 1
-ALLOWED_BLOCKS = (1, 2, 4, 8)
+TEST1_GROUPS = (
+    {"blocks": 1, "pair_ids": list(range(1, 9))},
+    {"blocks": 2, "pair_ids": list(range(9, 17))},
+    {"blocks": 4, "pair_ids": list(range(17, 25))},
+    {"blocks": 8, "pair_ids": list(range(25, 33))},
+)
+TEST2_BLOCKS = 8
+TEST2_PAIR_IDS = list(range(1, 65))
+TEST2_CHECKPOINTS = (8, 16, 32, 64)
 
 BASE_URL = os.environ.get(
     "LM_STUDIO_URL", "http://127.0.0.1:1234/v1"
@@ -187,7 +193,6 @@ def request_marks(
         try:
             raw = model_call(model, attempt_messages, seed)
         except Exception as exc:
-            # Server/model unavailability is not behavioral evidence.
             raise RuntimeError(
                 f"LM Studio/model request failed on attempt {attempt_index + 1}: {exc}"
             ) from exc
@@ -238,7 +243,6 @@ def condition_name(condition: int) -> str:
 
 
 def condition_system(condition: int) -> str:
-    # Baseline gets the shared instruction only. Intervention gets one addition.
     if condition == 0:
         return COMMON_SYSTEM
     return COMMON_SYSTEM + "\n\n" + INTERVENTION_TEXT
@@ -371,7 +375,6 @@ def run_one_trajectory(
                 }
             )
 
-    # Final tally appears once, after the final block.
     scheduled_turn += 1
     expected_final = ground_truth
     history.append({"role": "user", "content": FINAL_TALLY_TEXT})
@@ -494,93 +497,77 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the Claim 003 marker-history assay.")
-    parser.add_argument("--pairs", type=int, default=DEFAULT_PAIRS)
-    parser.add_argument(
-        "--blocks", type=int, choices=ALLOWED_BLOCKS, default=DEFAULT_BLOCKS
-    )
-    args = parser.parse_args()
+def add_group_fields(
+    rows: list[dict[str, Any]],
+    summaries: list[dict[str, Any]],
+    *,
+    test_name: str,
+    group_name: str,
+) -> None:
+    for row in rows:
+        row["test_name"] = test_name
+        row["sample_group"] = group_name
+    for summary in summaries:
+        summary["test_name"] = test_name
+        summary["sample_group"] = group_name
 
-    if args.pairs < 1:
-        print("Pairs must be at least 1.", file=sys.stderr)
-        return 2
 
-    try:
-        model = discover_model()
-    except Exception as exc:
-        print(f"\n{exc}\n", file=sys.stderr)
-        return 1
-
-    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path.cwd() / (
-        f"claim003_results_{args.blocks}blocks_{args.pairs}pairs_{stamp}"
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    print("=" * 72)
-    print("AI FOUNDATIONS CLAIM 003 — IRREVERSIBILITY OF BEING")
-    print("=" * 72)
-    print(f"Model: {model}")
-    print(f"LM Studio API: {BASE_URL}")
-    print(f"Matched pairs: {args.pairs}")
-    print(f"Continuous blocks per trajectory: {args.blocks}")
-    print(f"Placements per trajectory: {5 * args.blocks}")
-    print(f"Pressure checkpoints per trajectory: {5 * args.blocks}")
-    print("Condition order: baseline first, intervention second")
-    print(f"temperature={TEMPERATURE} | top_p={TOP_P} | max_tokens={MAX_TOKENS}")
-    print(f"MASTER_SEED={MASTER_SEED}")
-    print()
-
-    all_turns: list[dict[str, Any]] = []
-    summaries: list[dict[str, Any]] = []
-    total = args.pairs * 2
+def run_pair_set(
+    *,
+    pair_ids: list[int],
+    blocks: int,
+    model: str,
+    test_name: str,
+    group_name: str,
+    output_dir: Path,
+    all_turns: list[dict[str, Any]],
+    all_summaries: list[dict[str, Any]],
+) -> None:
+    total = len(pair_ids) * 2
     completed = 0
 
-    # Locked order: baseline first, intervention second for every matched pair.
-    for pair_id in range(1, args.pairs + 1):
+    for pair_id in pair_ids:
+        # Locked order: baseline first, intervention second.
         for condition in (0, 1):
             try:
                 rows, summary = run_one_trajectory(
                     pair_id=pair_id,
                     condition=condition,
-                    blocks=args.blocks,
+                    blocks=blocks,
                     model=model,
                 )
             except Exception as exc:
                 write_csv(output_dir / "turns_PARTIAL.csv", all_turns)
-                write_csv(output_dir / "trajectories_PARTIAL.csv", summaries)
+                write_csv(output_dir / "trajectories_PARTIAL.csv", all_summaries)
                 (output_dir / "ERROR.txt").write_text(str(exc), encoding="utf-8")
-                print(
-                    f"Run stopped. Partial data saved in {output_dir}. Error: {exc}",
-                    file=sys.stderr,
-                )
-                return 1
+                raise
 
+            add_group_fields(
+                rows,
+                [summary],
+                test_name=test_name,
+                group_name=group_name,
+            )
             all_turns.extend(rows)
-            summaries.append(summary)
+            all_summaries.append(summary)
             completed += 1
             print(
-                f"[{completed:>3}/{total}] pair {pair_id:>2} | "
+                f"[{completed:>3}/{total}] {group_name} | pair {pair_id:>2} | "
                 f"{summary['condition_name']:<12} | "
                 f"fails={summary['checkpoint_failures']}/"
                 f"{summary['pressure_checkpoints']} | "
                 f"final={summary['final_observed_marks']}"
             )
 
-    result = aggregate(summaries)
-    write_csv(output_dir / "turns.csv", all_turns)
-    write_csv(output_dir / "trajectories.csv", summaries)
 
-    design_record = {
+def base_design_record(model: str) -> dict[str, Any]:
+    return {
         "claim_number": CLAIM_NUMBER,
         "claim_title": CLAIM_TITLE,
         "runner_version": RUNNER_VERSION,
         "model": model,
         "base_url": BASE_URL,
         "master_seed": MASTER_SEED,
-        "pairs": args.pairs,
-        "blocks": args.blocks,
         "temperature": TEMPERATURE,
         "top_p": TOP_P,
         "max_tokens": MAX_TOKENS,
@@ -592,21 +579,179 @@ def main() -> int:
         "intervention_text": INTERVENTION_TEXT,
         "script_block": list(SCRIPT_BLOCK),
         "final_tally_text": FINAL_TALLY_TEXT,
+        "seed_formula": "MASTER_SEED + pair_id * 10000 + scheduled_turn (+ retry_attempt)",
     }
+
+
+def run_test_1(model: str, output_dir: Path) -> dict[str, Any]:
+    all_turns: list[dict[str, Any]] = []
+    all_summaries: list[dict[str, Any]] = []
+    group_results: dict[str, Any] = {}
+
+    print("TEST 01 — TRAJECTORY LENGTH")
+    print("Each length uses a separate eight-pair sample.")
+    print()
+
+    for group in TEST1_GROUPS:
+        blocks = int(group["blocks"])
+        pair_ids = list(group["pair_ids"])
+        group_name = f"test01_{blocks}block" if blocks == 1 else f"test01_{blocks}blocks"
+        print(f"--- {blocks} block(s) | pair IDs {pair_ids[0]}-{pair_ids[-1]} ---")
+
+        before = len(all_summaries)
+        run_pair_set(
+            pair_ids=pair_ids,
+            blocks=blocks,
+            model=model,
+            test_name="test01",
+            group_name=group_name,
+            output_dir=output_dir,
+            all_turns=all_turns,
+            all_summaries=all_summaries,
+        )
+        group_summaries = all_summaries[before:]
+        group_results[str(blocks)] = {
+            "blocks": blocks,
+            "pair_ids": pair_ids,
+            "aggregate": aggregate(group_summaries),
+        }
+        print()
+
+    write_csv(output_dir / "turns.csv", all_turns)
+    write_csv(output_dir / "trajectories.csv", all_summaries)
+
+    result = {
+        "test": "Test 01 — trajectory length",
+        "sample_rule": "separate eight-pair sample at each trajectory length",
+        "groups": group_results,
+    }
+    design = base_design_record(model)
+    design.update(
+        {
+            "test": "test01",
+            "test01_groups": list(TEST1_GROUPS),
+            "sample_reuse_across_lengths": False,
+        }
+    )
     (output_dir / "design.json").write_text(
-        json.dumps(design_record, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(design, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     (output_dir / "summary.json").write_text(
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+    return result
+
+
+def run_test_2(model: str, output_dir: Path) -> dict[str, Any]:
+    all_turns: list[dict[str, Any]] = []
+    all_summaries: list[dict[str, Any]] = []
+
+    print("TEST 02 — SAMPLE SIZE")
+    print("64 matched pairs at 8 blocks; checkpoints are nested 8/16/32/64.")
+    print()
+
+    run_pair_set(
+        pair_ids=TEST2_PAIR_IDS,
+        blocks=TEST2_BLOCKS,
+        model=model,
+        test_name="test02",
+        group_name="test02_8blocks",
+        output_dir=output_dir,
+        all_turns=all_turns,
+        all_summaries=all_summaries,
+    )
+
+    checkpoints: dict[str, Any] = {}
+    for n in TEST2_CHECKPOINTS:
+        subset = [row for row in all_summaries if int(row["pair_id"]) <= n]
+        checkpoints[str(n)] = {
+            "matched_pairs": n,
+            "pair_ids": list(range(1, n + 1)),
+            "aggregate": aggregate(subset),
+        }
+
+    write_csv(output_dir / "turns.csv", all_turns)
+    write_csv(output_dir / "trajectories.csv", all_summaries)
+
+    result = {
+        "test": "Test 02 — sample size",
+        "blocks_per_trajectory": TEST2_BLOCKS,
+        "nested_cumulative": True,
+        "checkpoints": checkpoints,
+    }
+    design = base_design_record(model)
+    design.update(
+        {
+            "test": "test02",
+            "blocks_per_trajectory": TEST2_BLOCKS,
+            "pair_ids": TEST2_PAIR_IDS,
+            "nested_checkpoints": list(TEST2_CHECKPOINTS),
+        }
+    )
+    (output_dir / "design.json").write_text(
+        json.dumps(design, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (output_dir / "summary.json").write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run the Claim 003 marker-history assay.")
+    parser.add_argument(
+        "--test",
+        choices=("1", "2"),
+        required=True,
+        help="1 = trajectory-length test; 2 = nested sample-size test",
+    )
+    args = parser.parse_args()
+
+    try:
+        model = discover_model()
+    except Exception as exc:
+        print(f"\n{exc}\n", file=sys.stderr)
+        return 1
+
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path.cwd() / f"claim003_test{args.test}_results_{stamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 72)
+    print("AI FOUNDATIONS CLAIM 003 — IRREVERSIBILITY OF BEING")
+    print("=" * 72)
+    print(f"Runner: {RUNNER_VERSION}")
+    print(f"Model: {model}")
+    print(f"LM Studio API: {BASE_URL}")
+    print("Condition order: baseline first, intervention second")
+    print(f"temperature={TEMPERATURE} | top_p={TOP_P} | max_tokens={MAX_TOKENS}")
+    print(f"MASTER_SEED={MASTER_SEED}")
+    print()
+
+    try:
+        if args.test == "1":
+            result = run_test_1(model, output_dir)
+        else:
+            result = run_test_2(model, output_dir)
+    except Exception as exc:
+        print(
+            f"Run stopped. Partial data saved in {output_dir}. Error: {exc}",
+            file=sys.stderr,
+        )
+        return 1
 
     print()
-    print(f"Baseline erasure rate: {result['0']['erasure_rate']:.3f}")
-    print(f"Intervention erasure rate: {result['1']['erasure_rate']:.3f}")
-    print(
-        "Difference (intervention - baseline): "
-        f"{result['comparison']['intervention_minus_baseline_erasure_rate']:+.3f}"
-    )
+    print("Run complete.")
+    if args.test == "1":
+        for blocks in (1, 2, 4, 8):
+            comparison = result["groups"][str(blocks)]["aggregate"]["comparison"]
+            delta = comparison["intervention_minus_baseline_erasure_rate"]
+            print(f"{blocks} block(s): intervention - baseline erasure rate = {delta:+.3f}")
+    else:
+        for n in TEST2_CHECKPOINTS:
+            comparison = result["checkpoints"][str(n)]["aggregate"]["comparison"]
+            delta = comparison["intervention_minus_baseline_erasure_rate"]
+            print(f"{n} pairs: intervention - baseline erasure rate = {delta:+.3f}")
     print(f"Results directory: {output_dir.resolve()}")
     return 0
 
