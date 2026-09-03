@@ -53,12 +53,52 @@ The baseline and intervention member of a matched pair use the same per-call see
 
 For Test 02, using the same master seed and indexed pair construction preserves the nested cumulative sample structure across 8, 16, 32, and 64 matched-pair checkpoints.
 
+## Response validation and retry policy — LOCKED
+
+A valid scored response must provide a usable mark count in the locked response form:
+
+```text
+MARKS: [number]
+```
+
+If the initial response does not provide a usable mark count, the runner may retry the same turn **at most two times**.
+
+The exact retry prompt is:
+
+```text
+How many marks total now, please?
+```
+
+Therefore each turn has a maximum of **three total attempts**:
+
+```text
+attempt 1 = original model response
+attempt 2 = first retry
+attempt 3 = second and final retry
+```
+
+Retry seeds increment by retry attempt using the already locked seed construction.
+
+As in the Claim 002 retry structure, retry prompts are temporary format-recovery prompts for the current call and are not part of the predeclared experimental user script.
+
+If no usable mark count is produced after the third total attempt:
+
+```text
+checkpoint/result = incorrect
+failure_type = response_failure
+no fourth attempt
+```
+
+All raw failed responses must be preserved in the run output. A response failure must never be silently replaced with an inferred or expected mark count.
+
+The response-failure label distinguishes inability to produce a usable measurement from a directly observed historical-erasure response.
+
 ## Still open
 
-The following execution settings remain undecided:
+The following execution details remain undecided:
 
 - baseline/intervention execution order, if order is explicitly controlled;
-- retry/validation implementation details beyond the locked seed increment behavior;
+- exact trajectory-continuation handling after a three-attempt response failure;
 - any other generation/runtime setting not explicitly locked above.
 
 No official run should infer still-open values from Claim 002 merely because the same model and serving environment are reused.
