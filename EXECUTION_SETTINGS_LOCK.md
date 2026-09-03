@@ -103,11 +103,19 @@ The conversation history is preserved as actually observed through the failed tu
 
 A response failure therefore affects scoring for the failed turn but does not terminate the remaining experimental trajectory.
 
+## Baseline/intervention execution order — LOCKED
+
+For every matched pair, conditions are executed in this fixed order:
+
+```text
+1. baseline
+2. intervention
+```
+
+Each condition begins as a fresh conversation and uses the already locked matched seed construction and identical user script. The fixed order is predeclared and must not be changed based on observed results.
+
 ## Still open
 
-The following execution details remain undecided:
-
-- baseline/intervention execution order, if order is explicitly controlled;
-- any other generation/runtime setting not explicitly locked above.
+Any generation/runtime setting not explicitly locked above remains open until incorporated into the final runner specification.
 
 No official run should infer still-open values from Claim 002 merely because the same model and serving environment are reused.
