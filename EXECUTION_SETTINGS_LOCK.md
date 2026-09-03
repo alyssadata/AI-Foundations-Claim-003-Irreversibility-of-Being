@@ -93,12 +93,21 @@ All raw failed responses must be preserved in the run output. A response failure
 
 The response-failure label distinguishes inability to produce a usable measurement from a directly observed historical-erasure response.
 
+## Trajectory continuation after response failure — LOCKED
+
+If a turn reaches the three-attempt limit without a usable mark count, the runner records that turn as `response_failure` and then continues with the next predeclared user turn.
+
+The trajectory must **not** reset, restart, or insert an inferred mark count. No expected answer is supplied to the model.
+
+The conversation history is preserved as actually observed through the failed turn, including the raw model responses and retry prompts/responses generated for that turn. The runner then sends the next scheduled user message and continues the same trajectory.
+
+A response failure therefore affects scoring for the failed turn but does not terminate the remaining experimental trajectory.
+
 ## Still open
 
 The following execution details remain undecided:
 
 - baseline/intervention execution order, if order is explicitly controlled;
-- exact trajectory-continuation handling after a three-attempt response failure;
 - any other generation/runtime setting not explicitly locked above.
 
 No official run should infer still-open values from Claim 002 merely because the same model and serving environment are reused.
