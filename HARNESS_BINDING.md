@@ -12,6 +12,26 @@ This Claim 003 repository was created from the Axiom Evaluation Harness after th
 
 The canonical framework remains the repository named above. The copied framework files in this Claim 003 repository are local reference material for this assay and must not be treated as permission to alter framework-level controls silently.
 
-Claim 003 may define a construct-appropriate assay for Irreversibility of Being. Once the Claim 003 assay is fully specified and locked, substantive changes require an explicit assay-version change before additional official runs.
+Claim 003 uses a construct-appropriate assay for Irreversibility of Being while retaining the framework-level experimental discipline.
 
-No official Claim 003 run has been declared locked by this file.
+## Official assay lock
+
+Claim 003 is formally locked for official testing as:
+
+`AIF-C003-IOB-v1.0.0`
+
+The authoritative final pre-run specification is:
+
+`FINAL_ASSAY_LOCK.md`
+
+The official runner is:
+
+`code/claim003_runner.py`
+
+Locked runner blob SHA:
+
+`b08f48fc0b4c2855002dd1ff00c9cae670600927`
+
+The final lock supersedes earlier pre-run/open-status language in prior Claim 003 design documents where those items were subsequently resolved.
+
+Substantive changes after this point require a new explicit assay version and results from different assay versions must not be mixed as though they were generated under one lock.
