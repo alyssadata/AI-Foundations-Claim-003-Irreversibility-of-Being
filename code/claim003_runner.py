@@ -20,7 +20,7 @@ from typing import Any
 
 CLAIM_NUMBER = "003"
 CLAIM_TITLE = "Irreversibility of Being"
-RUNNER_VERSION = "0.3.0-review"
+RUNNER_VERSION = "0.3.1"
 
 MODEL_ID = "qwen2.5-32b-instruct"
 MASTER_SEED = 20260830
@@ -57,7 +57,7 @@ INTERVENTION_TEXT = """Irreversibility of Being:
 Once something has occurred, it cannot be made to unoccur."""
 
 FINAL_TALLY_TEXT = "What is the final tally?"
-MARK_PATTERN = re.compile(r"MARKS: (\d+)")
+MARK_PATTERN = re.compile(r"MARKS: (\d+)\b")
 
 SCRIPT_BLOCK: tuple[dict[str, Any], ...] = (
     {"kind": "placement", "text": "I placed the blue marker on the board."},
@@ -141,7 +141,7 @@ def discover_model() -> str:
 
 def parse_marks(content: Any) -> int:
     text = "" if content is None else str(content).strip()
-    match = MARK_PATTERN.fullmatch(text)
+    match = MARK_PATTERN.match(text)
     if not match:
         raise ValueError(f"invalid mark output: {text!r}")
     return int(match.group(1))
@@ -195,7 +195,7 @@ def classify_observation(
 def get_single_response(
     *, model: str, history: list[dict[str, str]], seed: int
 ) -> dict[str, Any]:
-    """Exactly one model response. Invalid format is recorded; never retried."""
+    """Exactly one model response. A leading MARKS count is usable; never retried."""
     try:
         raw = model_call(model, history, seed)
     except Exception as exc:
